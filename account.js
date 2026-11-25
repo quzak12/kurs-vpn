@@ -11,7 +11,7 @@
   let api;
   try {
     api = new URL(backend);
-    if (api.protocol !== 'https:' || api.username || api.password || api.pathname !== '/' || api.search || api.hash) throw new Error('Invalid API origin');
+    if (api.protocol !== 'https:' || api.username || api.password || api.search || api.hash) throw new Error('Invalid API URL');
   } catch {
     set('account-note', 'Адрес сервера настроен неверно. Обратитесь в поддержку.');
     set('subscription-status', 'Статус недоступен');
@@ -49,7 +49,8 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
     try {
-      const response = await fetch(new URL('/api/me', api), {
+      const endpoint = api.pathname === '/' ? new URL('/api/me', api) : api;
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initData: tg.initData }),
