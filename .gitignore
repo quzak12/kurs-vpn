@@ -1,0 +1,7 @@
+# Private credentials and persistent local databases
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+node_modules/
