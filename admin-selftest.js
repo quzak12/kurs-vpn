@@ -10,7 +10,7 @@
     if (!response.ok) {
       if (response.status === 403) throw new Error('Доступ отклонён. Проверь пароль и аккаунт Telegram.');
       if (response.status === 502 && Number.isInteger(result.telegramStatus)) throw new Error('Ошибка Telegram: ' + result.telegramStatus + '. Сообщи этот код поддержке.');
-      if (response.status === 502 && result.telegramStatus === 'network') throw new Error('Нет соединения с Telegram (ошибка сети).');
+      if (response.status === 502 && result.telegramStatus === 'network') { const kinds = { dns: 'DNS', tls: 'TLS', timeout: 'таймаут', connection: 'соединение', other: 'другое' }; throw new Error('Ошибка сети Telegram: ' + (kinds[result.networkKind] || 'неизвестно') + '.'); }
       throw new Error('Не удалось выполнить запрос (' + response.status + ').');
     }
     return result;
