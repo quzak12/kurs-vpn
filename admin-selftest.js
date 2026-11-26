@@ -10,6 +10,9 @@
     if (!response.ok) {
       if (response.status === 403) throw new Error('Доступ отклонён. Проверь пароль и аккаунт Telegram.');
       if (response.status === 502 && Number.isInteger(result.telegramStatus)) throw new Error('Ошибка Telegram: ' + result.telegramStatus + '. Сообщи этот код поддержке.');
+      if (response.status === 502 && result.relayStatus === 'network') throw new Error('Нет связи с Cloudflare. Проверь чат перед повтором: сообщение могло прийти.');
+      if (response.status === 502 && result.relayStatus === 'telegram_network') throw new Error('Cloudflare не получил ответ Telegram. Проверь чат перед повтором.');
+      if (response.status === 502 && result.relayStatus === 'rejected') throw new Error('Ошибка Cloudflare (' + result.relayHttp + '). Проверь настройки посредника.');
       if (response.status === 502 && result.telegramStatus === 'network') { const kinds = { dns: 'DNS', tls: 'TLS', timeout: 'таймаут', connection: 'соединение', other: 'другое' }; throw new Error('Ошибка сети Telegram: ' + (kinds[result.networkKind] || 'неизвестно') + '.'); }
       throw new Error('Не удалось выполнить запрос (' + response.status + ').');
     }
