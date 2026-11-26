@@ -93,7 +93,12 @@ def handler(event, context):
         return response(200, {'sentToAdmin': True, 'testOnly': True}, cors)
     except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
         return response(400, {'error': 'Invalid request'}, cors)
+    except urllib.error.HTTPError as exc:
+        # Log only the numeric status; request URLs contain the bot token.
+        print('telegram_http_status', exc.code)
+        return response(502, {'error': 'Could not send the test message', 'telegramStatus': exc.code}, cors)
     except (urllib.error.URLError, TimeoutError, OSError):
-        return response(502, {'error': 'Could not send the test message'}, cors)
+        print('telegram_network_error')
+        return response(502, {'error': 'Could not reach Telegram', 'telegramStatus': 'network'}, cors)
     except Exception:
         return response(500, {'error': 'Test message failed'}, cors)
