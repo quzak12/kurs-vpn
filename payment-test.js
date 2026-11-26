@@ -7,11 +7,12 @@
   const block = document.createElement('div');
   block.className = 'card';
   block.style.marginTop = '20px';
-  block.innerHTML = '<h2>Тест оплаты — без денег</h2><p>Выберите тариф выше. Тестовая оплата не списывает деньги и не активирует VPN или подписку.</p><button type="button" class="primary" id="yk-test-create">Проверить тестовую оплату</button><button type="button" class="back" id="yk-test-status" style="margin-top:12px">Проверить результат оплаты</button><p id="yk-test-message" role="status" aria-live="polite"></p>';
+  block.innerHTML = '<h2>Тест оплаты — без денег</h2><p>Выберите тариф выше. Тестовая оплата не списывает деньги и не активирует настоящую подписку или VPN.</p><p id="yk-test-subscription" style="margin-top:12px;color:#b8e9e3" role="status">Проверяем тестовую подписку…</p><button type="button" class="primary" id="yk-test-create">Проверить тестовую оплату</button><button type="button" class="back" id="yk-test-status" style="margin-top:12px">Проверить результат оплаты</button><p id="yk-test-message" role="status" aria-live="polite"></p>';
   container.insertAdjacentElement('afterend', block);
   const create = block.querySelector('#yk-test-create');
   const check = block.querySelector('#yk-test-status');
   const message = block.querySelector('#yk-test-message');
+  const testSubscription = block.querySelector('#yk-test-subscription');
   const tg = window.Telegram?.WebApp;
   const uid = tg?.initDataUnsafe?.user?.id;
   const key = 'kurs_yookassa_test_' + String(uid || 'none');
@@ -28,6 +29,20 @@
     return payload;
   }
   function setBusy(v) { create.disabled = v; check.disabled = v; }
+  function showTestSubscription(sub) {
+    if (!sub || typeof sub.active !== 'boolean') { testSubscription.textContent = 'Статус тестовой подписки недоступен.'; return; }
+    if (!sub.active) { testSubscription.textContent = 'Тестовая подписка не активна.'; return; }
+    const expiry = new Date(sub.expiresAt);
+    const until = Number.isNaN(expiry.getTime()) ? '' : ' до ' + expiry.toLocaleString('ru-RU', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const labels = { month: '1 месяц', quarter: '3 месяца', year: '1 год' };
+    const plan = labels[sub.plan] ? ' (' + labels[sub.plan] + ')' : '';
+    testSubscription.textContent = 'Тестовая подписка активна' + plan + until + '. Доступа к VPN нет.';
+  }
+  async function loadTestSubscription() {
+    if (!tg?.initData || !uid) { testSubscription.textContent = 'Для проверки тестовой подписки откройте приложение в Telegram.'; return; }
+    try { const result = await request({ action: 'subscription' }); showTestSubscription(result.testSubscription); }
+    catch (_) { testSubscription.textContent = 'Не удалось проверить тестовую подписку. Откройте приложение заново.'; }
+  }
   create.addEventListener('click', async () => {
     if (!auth()) return;
     const selected = document.querySelector('.plan[aria-pressed="true"]');
@@ -54,10 +69,11 @@
     setBusy(true); text('Проверяем тестовый платёж…');
     try {
       const result = await request({ action: 'status', paymentId: state.paymentId });
-      if (result.status === 'succeeded') text('Тестовый платёж успешен! Деньги не списаны, подписка и VPN не активированы.');
+      if (result.status === 'succeeded') { showTestSubscription(result.testSubscription); text('Тестовый платёж успешен. Деньги не списаны, настоящая подписка и VPN не активированы.'); }
       else if (result.status === 'canceled') text('Тестовый платёж отменён.');
       else text('Тестовый платёж ещё не завершён. Завершите его на странице ЮKassa и проверьте снова.');
     } catch (e) { text(e.message || 'Не удалось проверить платёж.'); }
     finally { setBusy(false); }
   });
+  loadTestSubscription();
 })();
