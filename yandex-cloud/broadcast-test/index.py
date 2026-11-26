@@ -13,6 +13,11 @@ import urllib.request
 from urllib.parse import parse_qsl
 
 ORIGIN = 'https://quzak12.github.io'
+RELAY_URL = 'https://kurs-vpn-relay-selftest.kursvpn-quzak12.workers.dev/send-test'
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 def response(status, payload, cors=False):
     headers = {'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Vary': 'Origin', 'X-Content-Type-Options': 'nosniff'}
@@ -85,34 +90,30 @@ def handler(event, context):
         text = body.get('text')
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 4000:
             return response(400, {'error': 'Invalid text'}, cors)
-        # Fixed recipient: the authenticated admin. No bulk send capability.
-        body_bytes = json.dumps({'chat_id': int(admin_id), 'text': text.strip(), 'disable_web_page_preview': True}, ensure_ascii=False).encode('utf-8')
-        request = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=body_bytes, headers={'Content-Type': 'application/json'}, method='POST')
-        with urllib.request.urlopen(request, timeout=8) as r:
+        # The relay has its own fixed recipient and requires a signed request.
+        raw = json.dumps({'token': token, 'text': text.strip()}, ensure_ascii=True, separators=(',', ':')).encode('utf-8')
+        timestamp = str(int(time.time()))
+        signature = hmac.new(admin_secret.encode('ascii'), timestamp.encode('ascii') + b'.' + raw, hashlib.sha256).hexdigest()
+        req = urllib.request.Request(RELAY_URL, data=raw, headers={'Content-Type':'application/json', 'X-Relay-Time':timestamp, 'X-Relay-Signature':signature}, method='POST')
+        with urllib.request.build_opener(NoRedirect()).open(req, timeout=16) as r:
             result = json.loads(r.read(65536))
-        if result.get('ok') is not True:
-            return response(502, {'error': 'Could not send the test message'}, cors)
+        if result.get('sentToAdmin') is not True or result.get('testOnly') is not True:
+            return response(502, {'error': 'Relay did not confirm delivery', 'relayStatus': 'invalid'}, cors)
         return response(200, {'sentToAdmin': True, 'testOnly': True}, cors)
     except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
         return response(400, {'error': 'Invalid request'}, cors)
     except urllib.error.HTTPError as exc:
-        # Log only the numeric status; request URLs contain the bot token.
-        print('telegram_http_status', exc.code)
-        return response(502, {'error': 'Could not send the test message', 'telegramStatus': exc.code}, cors)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        reason = getattr(exc, 'reason', exc)
-        if isinstance(reason, socket.gaierror):
-            kind = 'dns'
-        elif isinstance(reason, ssl.SSLError):
-            kind = 'tls'
-        elif isinstance(reason, (TimeoutError, socket.timeout)):
-            kind = 'timeout'
-        elif isinstance(reason, ConnectionError):
-            kind = 'connection'
-        else:
-            kind = 'other'
-        # Do not log exception text: Telegram request URLs contain the bot token.
-        print('telegram_network_kind', kind)
-        return response(502, {'error': 'Could not reach Telegram', 'telegramStatus': 'network', 'networkKind': kind}, cors)
+        # Never log request URLs, headers, bodies, or secrets.
+        try:
+            detail = json.loads(exc.read(4096))
+        except Exception:
+            detail = {}
+        if exc.code == 502 and detail.get('error') == 'telegram' and isinstance(detail.get('status'), int):
+            return response(502, {'error': 'Telegram rejected message', 'telegramStatus': detail['status']}, cors)
+        if exc.code == 502 and detail.get('error') == 'telegram_network':
+            return response(502, {'error': 'Relay could not reach Telegram', 'relayStatus': 'telegram_network'}, cors)
+        return response(502, {'error': 'Relay error', 'relayStatus': 'rejected', 'relayHttp': exc.code}, cors)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return response(502, {'error': 'Could not reach relay', 'relayStatus': 'network'}, cors)
     except Exception:
         return response(500, {'error': 'Test message failed'}, cors)
