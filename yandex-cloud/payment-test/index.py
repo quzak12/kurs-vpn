@@ -1,5 +1,10 @@
 """Isolated YooKassa test payments only: never grants access or accepts live keys."""
 import base64
+import calendar
+import datetime
+from decimal import Decimal, InvalidOperation
+import ydb
+import ydb.iam
 import hashlib
 import hmac
 import json
@@ -15,6 +20,9 @@ PLANS = {'month': ('249.00', '1 месяц'), 'quarter': ('599.00', '3 меся�
 ORIGIN = 'https://quzak12.github.io'
 RETURN_URL = 'https://quzak12.github.io/kurs-vpn/'
 API = 'https://api.yookassa.ru/v3/payments'
+MONTHS = {'month': 1, 'quarter': 3, 'year': 12}
+_pool = None
+_driver = None
 
 
 def response(status, payload, cors=False):
@@ -63,6 +71,76 @@ def yookassa_request(shop, key, body=None, payment_id=None, idem=None):
         return json.loads(r.read(65536))
 
 
+
+def pool():
+    global _pool, _driver
+    if _pool is None:
+        driver = ydb.Driver(endpoint=os.environ['YDB_ENDPOINT'], database=os.environ['YDB_DATABASE'], credentials=ydb.iam.MetadataUrlCredentials())
+        driver.wait(fail_fast=True, timeout=5)
+        _driver = driver
+        _pool = ydb.QuerySessionPool(driver)
+    return _pool
+
+
+def parse_payment(payment, pid):
+    """Validate live provider response, not client or webhook claims."""
+    metadata = payment.get('metadata') or {}
+    plan = metadata.get('plan')
+    uid_str = str(metadata.get('telegram_id', ''))
+    amount = payment.get('amount') or {}
+    if (payment.get('id') != pid or payment.get('test') is not True or
+        payment.get('status') != 'succeeded' or payment.get('paid') is not True or
+        plan not in PLANS or not re.fullmatch(r'[1-9][0-9]{0,15}', uid_str) or
+        int(uid_str) > 9007199254740991 or amount.get('currency') != 'RUB'):
+        raise ValueError('Invalid test payment')
+    try:
+        if Decimal(str(amount.get('value'))) != Decimal(PLANS[plan][0]):
+            raise ValueError('Invalid amount')
+    except InvalidOperation:
+        raise ValueError('Invalid amount')
+    captured = payment.get('captured_at')
+    if not isinstance(captured, str):
+        raise ValueError('Missing capture time')
+    started = datetime.datetime.fromisoformat(captured.replace('Z', '+00:00'))
+    if started.tzinfo is None:
+        raise ValueError('Missing timezone')
+    started = started.astimezone(datetime.timezone.utc)
+    if started > datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5):
+        raise ValueError('Invalid capture time')
+    zero = started.month - 1 + MONTHS[plan]
+    year, month = started.year + zero // 12, zero % 12 + 1
+    ended = started.replace(year=year, month=month, day=min(started.day, calendar.monthrange(year, month)[1]))
+    return {'pid': pid, 'uid': int(uid_str), 'plan': plan,
+            'started': started.isoformat(timespec='seconds').replace('+00:00', 'Z'),
+            'expires': ended.isoformat(timespec='seconds').replace('+00:00', 'Z')}
+
+
+def activate_test(payment, pid):
+    record = parse_payment(payment, pid)
+    pool().execute_with_retries(
+        'DECLARE $payment_id AS Utf8; DECLARE $telegram_id AS Int64; DECLARE $plan AS Utf8; '
+        'DECLARE $activated_at AS Utf8; DECLARE $expires_at AS Utf8; '
+        'UPSERT INTO test_payment_activations (payment_id, telegram_id, plan, activated_at, expires_at) '
+        'VALUES ($payment_id, $telegram_id, $plan, $activated_at, $expires_at);',
+        {'$payment_id': record['pid'], '$telegram_id': record['uid'], '$plan': record['plan'],
+         '$activated_at': record['started'], '$expires_at': record['expires']})
+    return record
+
+
+def current_test_subscription(uid):
+    results = pool().execute_with_retries(
+        'DECLARE $telegram_id AS Int64; SELECT plan, expires_at FROM test_payment_activations WHERE telegram_id = $telegram_id;',
+        {'$telegram_id': uid})
+    rows = results[0].rows if results else []
+    rows = [r for r in rows if isinstance(r.expires_at, str)]
+    if not rows:
+        return {'active': False, 'expiresAt': None, 'plan': None}
+    row = max(rows, key=lambda r: r.expires_at)
+    expires = datetime.datetime.fromisoformat(row.expires_at.replace('Z', '+00:00'))
+    return {'active': bool(expires.tzinfo) and expires > datetime.datetime.now(datetime.timezone.utc),
+            'expiresAt': row.expires_at, 'plan': row.plan}
+
+
 def handler(event, context):
     headers = {str(k).lower(): str(v) for k, v in (event.get('headers') or {}).items()}
     origin = headers.get('origin')
@@ -77,7 +155,7 @@ def handler(event, context):
     shop = os.environ.get('YOOKASSA_TEST_SHOP_ID', '')
     key = os.environ.get('YOOKASSA_TEST_SECRET_KEY', '')
     bot_token = os.environ.get('BOT_TOKEN', '')
-    if not re.fullmatch(r'\d{1,20}', shop) or not key.startswith('test_') or not bot_token:
+    if not re.fullmatch(r'\d{1,20}', shop) or not key.startswith('test_') or not bot_token or not os.environ.get('YDB_ENDPOINT') or not os.environ.get('YDB_DATABASE'):
         return response(503, {'error': 'Test service not configured'}, cors)
     try:
         raw = event.get('body') or ''
@@ -89,10 +167,20 @@ def handler(event, context):
         body = json.loads(raw)
         if not isinstance(body, dict):
             return response(400, {'error': 'Invalid request'}, cors)
+        # A webhook contains no credentials: independently fetch the payment from YooKassa.
+        if body.get('event') == 'payment.succeeded' and not origin:
+            pid = (body.get('object') or {}).get('id', '')
+            if not isinstance(pid, str) or not re.fullmatch(r'[0-9a-fA-F-]{36}', pid):
+                return response(400, {'error': 'Invalid payment ID'}, cors)
+            payment = yookassa_request(shop, key, payment_id=pid)
+            activate_test(payment, pid)
+            return response(200, {'ok': True}, cors)
         uid = telegram_user(body.get('initData'), bot_token)
         if not uid:
             return response(401, {'error': 'Invalid Telegram authorization'}, cors)
         action = body.get('action')
+        if action == 'subscription':
+            return response(200, {'test': True, 'testSubscription': current_test_subscription(uid)}, cors)
         if action == 'create':
             plan = body.get('plan')
             request_id = str(uuid.UUID(body.get('requestId', '')))
@@ -122,7 +210,10 @@ def handler(event, context):
             status = payment.get('status')
             if status not in ('pending', 'waiting_for_capture', 'succeeded', 'canceled'):
                 return response(502, {'error': 'Unexpected payment status'}, cors)
-            return response(200, {'test': True, 'status': status, 'subscriptionActivated': False}, cors)
+            if status == 'succeeded':
+                activate_test(payment, pid)
+            return response(200, {'test': True, 'status': status, 'subscriptionActivated': False,
+                                  'testSubscription': current_test_subscription(uid)}, cors)
         return response(400, {'error': 'Unknown action'}, cors)
     except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
         return response(400, {'error': 'Invalid request'}, cors)
