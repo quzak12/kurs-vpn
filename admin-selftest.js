@@ -27,9 +27,9 @@
     card.className = 'card';
     card.style.marginTop = '20px';
     card.innerHTML = `<h2>Тест рассылки</h2>
-      <p>Сообщение получишь только ты. Рассылка всем пользователям пока не подключена.</p>
+      <p>Тест с новогодней картинкой получишь только ты. Рассылка всем пользователям пока не подключена.</p>
       <label for="broadcast-selftest-text" style="display:block;margin-top:16px">Текст сообщения</label>
-      <textarea id="broadcast-selftest-text" maxlength="4000" rows="9" style="width:100%;margin-top:8px;padding:12px;border:1px solid #304a5e;border-radius:12px;background:#081a2d;color:#f3f8fb;font:inherit;resize:vertical"></textarea>
+      <textarea id="broadcast-selftest-text" maxlength="512" rows="9" style="width:100%;margin-top:8px;padding:12px;border:1px solid #304a5e;border-radius:12px;background:#081a2d;color:#f3f8fb;font:inherit;resize:vertical"></textarea>
       <label for="broadcast-selftest-secret" style="display:block;margin-top:16px">Пароль панели</label>
       <input id="broadcast-selftest-secret" type="password" autocomplete="off" maxlength="256" style="width:100%;margin-top:8px;padding:12px;border:1px solid #304a5e;border-radius:12px;background:#081a2d;color:#f3f8fb;font:inherit">
       <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px;font-size:13px;color:#b1c5d3"><input type="checkbox" id="broadcast-selftest-confirm">Подтверждаю отправку одного тестового сообщения только себе</label>
