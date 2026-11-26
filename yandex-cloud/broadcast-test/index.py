@@ -5,6 +5,8 @@ import hmac
 import json
 import os
 import re
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -97,8 +99,20 @@ def handler(event, context):
         # Log only the numeric status; request URLs contain the bot token.
         print('telegram_http_status', exc.code)
         return response(502, {'error': 'Could not send the test message', 'telegramStatus': exc.code}, cors)
-    except (urllib.error.URLError, TimeoutError, OSError):
-        print('telegram_network_error')
-        return response(502, {'error': 'Could not reach Telegram', 'telegramStatus': 'network'}, cors)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, 'reason', exc)
+        if isinstance(reason, socket.gaierror):
+            kind = 'dns'
+        elif isinstance(reason, ssl.SSLError):
+            kind = 'tls'
+        elif isinstance(reason, (TimeoutError, socket.timeout)):
+            kind = 'timeout'
+        elif isinstance(reason, ConnectionError):
+            kind = 'connection'
+        else:
+            kind = 'other'
+        # Do not log exception text: Telegram request URLs contain the bot token.
+        print('telegram_network_kind', kind)
+        return response(502, {'error': 'Could not reach Telegram', 'telegramStatus': 'network', 'networkKind': kind}, cors)
     except Exception:
         return response(500, {'error': 'Test message failed'}, cors)
