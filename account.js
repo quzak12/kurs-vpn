@@ -65,6 +65,7 @@
       const account = await response.json();
       if (typeof account?.subscription?.active !== 'boolean') throw new Error('Invalid response');
       const active = account.subscription.active;
+      window.dispatchEvent(new CustomEvent('kurs:account-subscription', {detail: account.subscription}));
       set('subscription-status', active ? 'Подписка активна' : 'Подписка не активна');
       set('home-status', active ? 'Активна' : 'Не активна');
       set('home-title', active ? 'Подписка активна' : 'Подписка пока не активна');
@@ -77,6 +78,7 @@
       }
       set('account-note', 'Статус относится к вашему аккаунту Telegram. Дата и время показаны в часовом поясе устройства.');
     } catch (error) {
+      window.dispatchEvent(new CustomEvent('kurs:account-subscription', {detail: null}));
       let detail;
       if (error?.status === 401) {
         detail = 'Ошибка авторизации Telegram (401). Закройте Mini App и откройте его заново через бота.';

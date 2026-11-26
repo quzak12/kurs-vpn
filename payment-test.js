@@ -30,6 +30,7 @@
   }
   function setBusy(v) { create.disabled = v; check.disabled = v; }
   function showTestSubscription(sub) {
+    window.dispatchEvent(new CustomEvent('kurs:test-subscription', {detail: sub}));
     if (!sub || typeof sub.active !== 'boolean') { testSubscription.textContent = 'Статус тестовой подписки недоступен.'; return; }
     if (!sub.active) { testSubscription.textContent = 'Тестовая подписка не активна.'; return; }
     const expiry = new Date(sub.expiresAt);
@@ -41,7 +42,7 @@
   async function loadTestSubscription() {
     if (!tg?.initData || !uid) { testSubscription.textContent = 'Для проверки тестовой подписки откройте приложение в Telegram.'; return; }
     try { const result = await request({ action: 'subscription' }); showTestSubscription(result.testSubscription); }
-    catch (_) { testSubscription.textContent = 'Не удалось проверить тестовую подписку. Откройте приложение заново.'; }
+    catch (_) { window.dispatchEvent(new CustomEvent('kurs:test-subscription', {detail: null})); testSubscription.textContent = 'Не удалось проверить тестовую подписку. Откройте приложение заново.'; }
   }
   create.addEventListener('click', async () => {
     if (!auth()) return;
