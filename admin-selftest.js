@@ -5,7 +5,14 @@
   if (!tg?.initData || !support) return;
   const api = 'https://functions.yandexcloud.net/d4e7m8n8n4osqvg417vo';
   async function call(data) {
-    const response = await fetch(api, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...data, initData: tg.initData}), signal: AbortSignal.timeout(30000)});
+    const deliveryAction = data.action === 'self_test' || data.action === 'broadcast_step';
+    let response;
+    try {
+      response = await fetch(api, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...data, initData: tg.initData}), signal: AbortSignal.timeout(deliveryAction ? 135000 : 30000)});
+    } catch (e) {
+      if (deliveryAction) throw new Error('Ответ не получен: сообщение могло быть отправлено. Проверь чат или статус, прежде чем повторять.');
+      throw e;
+    }
     let result; try { result = await response.json(); } catch (_) { throw new Error('Неверный ответ сервера.'); }
     if (!response.ok) {
       if (response.status === 409 && result.broadcastStatus === 'too_many') throw new Error('Больше 50 пользователей. Нужна версия для большой аудитории.');
@@ -85,6 +92,7 @@
       showProgress(r);
       while(r.remaining>0) {
         const before=r;
+        progress.textContent+=' Обрабатываем следующего получателя; не закрывай приложение.';
         r=await call({action:'broadcast_step',runId,secret:secret.value});
         showProgress(r);
         if (r.failed>before.failed || r.uncertain>before.uncertain) {
@@ -149,16 +157,17 @@
     button.addEventListener('click', async () => {
       if (!confirm.checked) { result.textContent = 'Сначала поставь галочку подтверждения.'; return; }
       if (!text.value.trim() || !secret.value) { result.textContent = 'Введи текст и пароль панели.'; return; }
-      button.disabled = true;
-      result.textContent = 'Отправляем тест только тебе…';
+      setBusy(true);
+      const started = Date.now();
+      result.textContent = 'Отправляем тест только тебе. Не нажимай повторно — ответ может занять до двух минут.';
       try {
         const answer = await call({action:'self_test', text:text.value, secret:secret.value});
         if (answer.testOnly !== true || answer.sentToAdmin !== true) throw new Error('Не удалось подтвердить отправку.');
         secret.value = '';
         confirm.checked = false;
-        result.textContent = 'Тест отправлен только тебе в чат с ботом. Другим пользователям ничего не отправлено.';
-      } catch (e) { result.textContent = e.message || 'Не удалось отправить тест.'; }
-      finally { button.disabled = false; }
+        result.textContent = 'Тест отправлен только тебе. Время ожидания: '+Math.max(1,Math.round((Date.now()-started)/1000))+' сек. Другим пользователям ничего не отправлено.';
+      } catch (e) { result.textContent = (e.message || 'Не удалось отправить тест.')+' Время ожидания: '+Math.max(1,Math.round((Date.now()-started)/1000))+' сек.'; }
+      finally { setBusy(false); }
     });
   }
   init();
