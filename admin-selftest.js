@@ -141,6 +141,7 @@
         const r=await call({action:'relay_probe',secret:secret.value});
         const messages={ok:'Связь с Cloudflare и проверка подписи работают. Telegram этим тестом не проверяется.',signature_or_time:'Cloudflare отклонил подпись или время запроса.',edge_403:'Cloudflare вернул 403 до подтверждения от функции.',relay_not_configured:'Cloudflare: посредник не настроен.',timeout:'Истекло время ожидания Cloudflare.',dns:'Ошибка DNS при обращении к Cloudflare.',tls:'Ошибка TLS при обращении к Cloudflare.',network:'Ошибка соединения с Cloudflare.',http_other:'Cloudflare вернул неожиданный ответ.',unexpected_response:'Cloudflare вернул неожиданный ответ.'};
         result.textContent=messages[r.probe]||'Сервер не поддерживает новую проверку. Проверь установленный архив.';
+        if(r.probe==='edge_403' && ['cloudflare','envoy','nginx','squid','yandex','other','not_reported'].includes(r.server)) result.textContent+=' Сервер: '+r.server+'. Проверка Cloudflare: '+(r.challenge===true?'challenge':'не указана')+'.';
       } catch(e){result.textContent=e.message||'Ошибка проверки связи.';}
       finally{setBusy(false);}
     });
