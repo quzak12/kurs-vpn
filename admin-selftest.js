@@ -46,6 +46,7 @@
       <button type="button" class="primary" id="broadcast-preview">Проверить получателей</button>
       <p id="broadcast-progress" role="status" aria-live="polite" style="margin-top:12px"></p>
       <button type="button" class="primary" id="broadcast-start" hidden>Отправить всем</button>
+      <button type="button" class="primary" id="broadcast-status" hidden>Только проверить статус</button>
       <button type="button" class="primary" id="broadcast-resume" hidden>Проверить и продолжить последнюю рассылку</button>`;
     support.appendChild(card);
     const text = card.querySelector('#broadcast-selftest-text');
@@ -56,26 +57,39 @@
     const previewButton = card.querySelector('#broadcast-preview');
     const startButton = card.querySelector('#broadcast-start');
     const resumeButton = card.querySelector('#broadcast-resume');
+    const statusButton = card.querySelector('#broadcast-status');
     const progress = card.querySelector('#broadcast-progress');
     const storageKey = 'kurs-broadcast-last-run-v2';
     let preview = null, runId = '';
     try { runId = localStorage.getItem(storageKey) || ''; } catch (_) {}
     if (!/^[a-f0-9]{32}$/.test(runId)) runId='';
     resumeButton.hidden = !runId;
+    statusButton.hidden = !runId;
     function clearPreview() { preview=null; startButton.hidden=true; }
     text.addEventListener('input',clearPreview);
     secret.addEventListener('input',clearPreview);
-    function setBusy(busy) { previewButton.disabled=busy; startButton.disabled=busy; resumeButton.disabled=busy; button.disabled=busy; text.disabled=busy; secret.disabled=busy; }
+    function setBusy(busy) { previewButton.disabled=busy; startButton.disabled=busy; resumeButton.disabled=busy; statusButton.disabled=busy; button.disabled=busy; text.disabled=busy; secret.disabled=busy; }
     function showProgress(r) {
       if (r.broadcastStatus!=='progress' || !['total','sent','failed','uncertain','remaining'].every(k=>Number.isInteger(r[k]) && r[k]>=0)) throw new Error('Неверный ответ сервера.');
       progress.textContent='Отправлено: '+r.sent+' из '+r.total+'. Ошибок: '+r.failed+'. В процессе или неизвестно: '+r.uncertain+'. Осталось: '+r.remaining+'.';
+      const labels={telegram_400:'Telegram: неверный запрос (400)',telegram_403:'Telegram отклонил отправку (403)',telegram_429:'Telegram: слишком много запросов (429)',telegram_other_4xx:'Telegram отклонил запрос',relay_rejected:'Cloudflare отклонил запрос',relay_unavailable:'Cloudflare недоступен или не настроен',telegram_network:'Cloudflare не получил ответ Telegram',network_unknown:'Потерян ответ при отправке',relay_unconfirmed:'Ответ не подтвердил доставку',unexpected_unknown:'Неожиданная ошибка — результат неизвестен',not_recorded:'Причина не сохранилась'};
+      if (r.reasonCounts && typeof r.reasonCounts==='object') {
+        const details=Object.entries(r.reasonCounts).filter(([k,v])=>labels[k] && Number.isInteger(v) && v>0).map(([k,v])=>labels[k]+': '+v);
+        if(details.length) progress.textContent+=' Причины: '+details.join('; ')+'.';
+      }
     }
     async function continueRun() {
       let r=await call({action:'broadcast_status',runId,secret:secret.value});
       showProgress(r);
       while(r.remaining>0) {
+        const before=r;
         r=await call({action:'broadcast_step',runId,secret:secret.value});
         showProgress(r);
+        if (r.failed>before.failed || r.uncertain>before.uncertain) {
+          resumeButton.hidden=false; statusButton.hidden=false;
+          progress.textContent+=' Остановлено для проверки: повторно не запускай рассылку, пока причина не ясна.';
+          return;
+        }
       }
       resumeButton.hidden=false;
       if(r.uncertain) progress.textContent+=' Проверь неизвестный результат, прежде чем начинать новую рассылку.';
@@ -98,10 +112,17 @@
       try {
         const bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);runId=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
         try{localStorage.setItem(storageKey,runId);}catch(_){}
-        resumeButton.hidden=false;progress.textContent='Создаём рассылку…';
+        resumeButton.hidden=false;statusButton.hidden=false;progress.textContent='Создаём рассылку…';
         await call({action:'create_broadcast',runId,text:text.value,secret:secret.value,confirm:true,expectedCount:p.count,textHash:p.textHash});
         await continueRun();
       } catch(e){progress.textContent=(e.message||'Ошибка.')+' Проверь статус последней рассылки перед новым запуском.';}
+      finally{setBusy(false);}
+    });
+    statusButton.addEventListener('click',async()=>{
+      if(!runId||!secret.value){progress.textContent='Введи пароль панели.';return;}
+      setBusy(true);progress.textContent='Проверяем статус без отправки…';
+      try {const r=await call({action:'broadcast_status',runId,secret:secret.value});showProgress(r);}
+      catch(e){progress.textContent=e.message||'Ошибка проверки статуса.';}
       finally{setBusy(false);}
     });
     resumeButton.addEventListener('click',async()=>{
