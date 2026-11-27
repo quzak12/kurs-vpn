@@ -38,6 +38,7 @@
       <label for="broadcast-selftest-secret" style="display:block;margin-top:16px">Пароль панели</label>
       <input id="broadcast-selftest-secret" type="password" autocomplete="off" maxlength="256" style="width:100%;margin-top:8px;padding:12px;border:1px solid #304a5e;border-radius:12px;background:#081a2d;color:#f3f8fb;font:inherit">
       <label style="display:flex;gap:8px;align-items:flex-start;margin-top:16px;font-size:13px;color:#b1c5d3"><input type="checkbox" id="broadcast-selftest-confirm">Подтверждаю отправку одного тестового сообщения только себе</label>
+      <button type="button" class="primary" id="broadcast-probe">Проверить связь без отправки</button>
       <button type="button" class="primary" id="broadcast-selftest-send">Отправить тест себе</button>
       <p id="broadcast-selftest-result" role="status" aria-live="polite" style="margin-top:12px"></p>
       <hr style="border:0;border-top:1px solid #304a5e;margin:22px 0">
@@ -53,6 +54,7 @@
     const secret = card.querySelector('#broadcast-selftest-secret');
     const confirm = card.querySelector('#broadcast-selftest-confirm');
     const button = card.querySelector('#broadcast-selftest-send');
+    const probeButton = card.querySelector('#broadcast-probe');
     const result = card.querySelector('#broadcast-selftest-result');
     const previewButton = card.querySelector('#broadcast-preview');
     const startButton = card.querySelector('#broadcast-start');
@@ -68,7 +70,7 @@
     function clearPreview() { preview=null; startButton.hidden=true; }
     text.addEventListener('input',clearPreview);
     secret.addEventListener('input',clearPreview);
-    function setBusy(busy) { previewButton.disabled=busy; startButton.disabled=busy; resumeButton.disabled=busy; statusButton.disabled=busy; button.disabled=busy; text.disabled=busy; secret.disabled=busy; }
+    function setBusy(busy) { previewButton.disabled=busy; startButton.disabled=busy; resumeButton.disabled=busy; statusButton.disabled=busy; probeButton.disabled=busy; button.disabled=busy; text.disabled=busy; secret.disabled=busy; }
     function showProgress(r) {
       if (r.broadcastStatus!=='progress' || !['total','sent','failed','uncertain','remaining'].every(k=>Number.isInteger(r[k]) && r[k]>=0)) throw new Error('Неверный ответ сервера.');
       progress.textContent='Отправлено: '+r.sent+' из '+r.total+'. Ошибок: '+r.failed+'. В процессе или неизвестно: '+r.uncertain+'. Осталось: '+r.remaining+'.';
@@ -132,6 +134,16 @@
       finally{setBusy(false);}
     });
     text.value = '🎄 Новогодний розыгрыш от KURS VPN!\n\nПосле запуска сервиса каждый, кто купит подписку KURS VPN, автоматически станет участником новогоднего розыгрыша 🎁\n\nПодробности о призах, сроках и выборе победителей расскажем отдельно. Следите за новостями! ✨';
+    probeButton.addEventListener('click', async () => {
+      if(!secret.value){result.textContent='Введи пароль панели.';return;}
+      setBusy(true);result.textContent='Проверяем связь, сообщения не отправляются…';
+      try {
+        const r=await call({action:'relay_probe',secret:secret.value});
+        const messages={ok:'Связь с Cloudflare и проверка подписи работают. Telegram этим тестом не проверяется.',signature_or_time:'Cloudflare отклонил подпись или время запроса.',edge_403:'Cloudflare вернул 403 до подтверждения от функции.',relay_not_configured:'Cloudflare: посредник не настроен.',timeout:'Истекло время ожидания Cloudflare.',dns:'Ошибка DNS при обращении к Cloudflare.',tls:'Ошибка TLS при обращении к Cloudflare.',network:'Ошибка соединения с Cloudflare.',http_other:'Cloudflare вернул неожиданный ответ.',unexpected_response:'Cloudflare вернул неожиданный ответ.'};
+        result.textContent=messages[r.probe]||'Сервер не поддерживает новую проверку. Проверь установленный архив.';
+      } catch(e){result.textContent=e.message||'Ошибка проверки связи.';}
+      finally{setBusy(false);}
+    });
     button.addEventListener('click', async () => {
       if (!confirm.checked) { result.textContent = 'Сначала поставь галочку подтверждения.'; return; }
       if (!text.value.trim() || !secret.value) { result.textContent = 'Введи текст и пароль панели.'; return; }
